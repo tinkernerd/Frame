@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+config
+test-library
+.vscode
+__pycache__
+vscode-template
+setup.sh
+install.sh
+server.env.example
+README.md

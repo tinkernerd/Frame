@@ -1,0 +1,8 @@
+# Local only — never commit
+.env
+.venv/
+.vscode/
+config/
+test-library/
+__pycache__/
+.DS_Store
