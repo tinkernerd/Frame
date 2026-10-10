@@ -64,9 +64,9 @@ def tmdb_key() -> str:
     return env("TMDB_API_KEY")
 
 
-APP_VERSION = "2.0"
+APP_VERSION = "0.01"
 # Project repository shown on the About page
-GITHUB_URL = "https://github.com/"
+GITHUB_URL = "https://github.com/tinkernerd/Frame"
 
 
 POSTER_STEM = "folder"

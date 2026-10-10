@@ -75,7 +75,7 @@ No database is needed: posters live in your folders, and the only state is a cac
 On the server (Docker installed, NAS shares mounted):
 
 ```bash
-git clone https://github.com/<you>/<repo>.git frame
+git clone https://github.com/tinkernerd/Frame.git frame
 cd frame
 ./install.sh
 ```
