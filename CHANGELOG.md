@@ -3,6 +3,13 @@
 All notable changes to Frame are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- GitHub Actions publishes Docker images to `ghcr.io/tinkernerd/frame` for amd64 and arm64. Releases are tagged `vX.XX` and `latest`, and pushes to `main` are tagged `edge`.
+- `install.sh` downloads the published image instead of building on the server. It falls back to building, and `--build` forces it.
+- `FRAME_TAG` setting to pin an image version.
+
 ## [v0.01] — 2026-10-10
 
 First official release.
@@ -46,4 +53,5 @@ First official release.
 - Docker image and `docker-compose.yml`, one container with no database required.
 - `install.sh` for servers: asks for library paths, user/group, port and keys, checks the folders are writable, builds, starts and confirms Frame is running. Re-run it to pull updates and rebuild.
 
+[Unreleased]: https://github.com/tinkernerd/Frame/compare/v0.01...HEAD
 [v0.01]: https://github.com/tinkernerd/Frame/releases/tag/v0.01

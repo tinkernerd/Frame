@@ -80,8 +80,19 @@ cd frame
 ./install.sh
 ```
 
-The installer asks for your movie/show folders, user/group, port and keys, checks the folders are
-writable, builds the image, starts it, and prints the address when it's up.
+The installer asks for your movie/show folders, user/group, port and keys, downloads the published
+image (`ghcr.io/tinkernerd/frame`), starts it, checks the folders are writable, and prints the address
+when it's up. If no image is available it builds from source; `./install.sh --build` always does.
+
+Images are built by GitHub Actions for amd64 and arm64:
+
+| Tag | What it is |
+|---|---|
+| `latest` | Newest release |
+| `v0.01`, … | A specific release |
+| `edge` | Newest commit on `main` (may be unstable) |
+
+Pick one with `FRAME_TAG=` in `.env`.
 
 - **Update:** `./install.sh` again. It pulls the latest code and rebuilds, keeping your settings.
 - **Change settings:** `./install.sh --reconfigure`, or edit `.env`.
@@ -89,4 +100,4 @@ writable, builds the image, starts it, and prints the address when it's up.
 - **Stop:** `docker compose down`
 
 Prefer to do it by hand? `cp server.env.example .env`, edit it, `mkdir config`, then
-`docker compose up -d --build`.
+`docker compose up -d`.

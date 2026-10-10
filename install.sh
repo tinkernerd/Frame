@@ -4,8 +4,18 @@
 #   First time:  git clone <repo> frame && cd frame && ./install.sh
 #   Update:      ./install.sh          (pulls the latest code and rebuilds)
 #   Re-ask setup questions:  ./install.sh --reconfigure
+#   Build from source instead of downloading the published image:  ./install.sh --build
 set -euo pipefail
 cd "$(dirname "$0")"
+
+RECONFIGURE=""; BUILD=""
+for arg in "$@"; do
+  case "$arg" in
+    --reconfigure) RECONFIGURE=1 ;;
+    --build) BUILD=1 ;;
+    *) echo "Unknown option: $arg"; exit 2 ;;
+  esac
+done
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -45,7 +55,7 @@ if [ -d .git ] && command -v git >/dev/null 2>&1 && git rev-parse --abbrev-ref '
 fi
 
 # --------------------------------------------------------------- 3. settings
-if [ ! -f .env ] || [ -z "$(current MOVIES_PATH)" ] || [ "${1:-}" = "--reconfigure" ]; then
+if [ ! -f .env ] || [ -z "$(current MOVIES_PATH)" ] || [ -n "$RECONFIGURE" ]; then
   bold "Setup"
   echo "  Where are your libraries mounted on this server? (e.g. /mnt/nas/movies)"
   ask MOVIES_PATH "Movies folder" "$(current MOVIES_PATH)"
@@ -93,9 +103,18 @@ if [ "$(stat -c %u config)" != "$PUID" ]; then
   chown "$PUID:$PGID" config 2>/dev/null || sudo chown "$PUID:$PGID" config \
     || warn "Couldn't hand ./config to $PUID:$PGID. TMDB info won't be cached between restarts."
 fi
-# --------------------------------------------------------------- 5. build + start
-bold "Building and starting Frame"
-$COMPOSE up -d --build
+# --------------------------------------------------------------- 5. get image + start
+if [ -n "$BUILD" ]; then
+  bold "Building Frame from source"
+  $COMPOSE up -d --build
+elif $COMPOSE pull --quiet frame 2>/dev/null; then
+  ok "Downloaded image ghcr.io/tinkernerd/frame:${FRAME_TAG:-latest}"
+  bold "Starting Frame"
+  $COMPOSE up -d
+else
+  warn "Couldn't download the published image (none released yet, or it's private). Building from source instead."
+  $COMPOSE up -d --build
+fi
 
 for d in movies shows; do
   if $COMPOSE exec -T frame sh -c "f=/media/$d/.frame-write-test; touch \"\$f\" && rm \"\$f\"" >/dev/null 2>&1; then
