@@ -1,10 +1,11 @@
 # Run on the server:  docker compose up -d
-# Uses the published image from GitHub; add --build to build from this folder instead.
+# Uses the published image from GitHub. If it isn't available, Compose builds it straight
+# from the GitHub repo, so this file also works on its own (Portainer, Dockge, a stacks folder…).
 # Settings come from a .env file next to this one (see server.env.example).
 services:
   frame:
     image: ghcr.io/tinkernerd/frame:${FRAME_TAG:-latest}
-    build: .
+    build: https://github.com/tinkernerd/Frame.git#${FRAME_REF:-main}
     container_name: frame
     ports:
       - "${PORT:-8080}:8080"

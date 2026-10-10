@@ -1,18 +1,68 @@
-name: Docker Image CI
+name: Docker image
 
+# Publish a release (e.g. v0.01)  → ghcr.io/tinkernerd/frame:v0.01 and :latest
+# Push to main                    → ghcr.io/tinkernerd/frame:edge
+# Pull request                    → build only, nothing is published
 on:
+  release:
+    types: [published]
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/frame
+  # Put annotations on the multi-arch index too, so the package page shows the description
+  DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push to GitHub Container Registry with the built-in token
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4     # lets one runner build ARM images too
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=Frame
+            org.opencontainers.image.description=Self-hosted poster manager for folder-based movie & TV libraries
+          annotations: |
+            org.opencontainers.image.title=Frame
+            org.opencontainers.image.description=Self-hosted poster manager for folder-based movie & TV libraries
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,4 +1,6 @@
 FROM python:3.12-slim
+LABEL org.opencontainers.image.source=https://github.com/tinkernerd/Frame
+LABEL org.opencontainers.image.description="Self-hosted poster manager for folder-based movie & TV libraries"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     MOVIES_DIR=/media/movies SHOWS_DIR=/media/shows CONFIG_DIR=/config
 WORKDIR /app

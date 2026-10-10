@@ -4,7 +4,7 @@
 #   First time:  git clone <repo> frame && cd frame && ./install.sh
 #   Update:      ./install.sh          (pulls the latest code and rebuilds)
 #   Re-ask setup questions:  ./install.sh --reconfigure
-#   Build from source instead of downloading the published image:  ./install.sh --build
+#   Build from GitHub source instead of downloading the published image:  ./install.sh --build
 set -euo pipefail
 cd "$(dirname "$0")"
 
