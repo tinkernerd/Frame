@@ -65,6 +65,7 @@ main { padding: 28px; max-width: 1600px; width: 100%; margin: 0 auto; flex: 1; }
 .stats { color: var(--muted); font-size: 14px; display: flex; gap: 14px; }
 .stats b { color: var(--text); font-weight: 600; }
 .stats .warn b { color: var(--missing); }
+.stats .scanned { color: var(--dim); }
 
 .grid {
   display: grid; gap: 26px 20px;

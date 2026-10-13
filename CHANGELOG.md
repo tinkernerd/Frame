@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `install.sh` downloads the published image instead of building on the server. It falls back to building, and `--build` forces it.
 - `FRAME_TAG` setting to pin an image version.
 
+### Changed
+- The library scan is saved to `config/library.json` and reused, including across restarts. Folders are only re-read when you click **Rescan**, which matters on large NAS libraries (1,000+ titles).
+- Uploading a poster or opening a title refreshes just that one entry.
+- Lists show when the library was last scanned.
+- Poster thumbnails no longer list each folder to find the poster file.
+- While TMDB matching runs, card links update in place instead of the whole grid redrawing every few seconds.
+- Search waits a moment after you stop typing before filtering.
+
 ## [v0.01] — 2026-10-10
 
 First official release.

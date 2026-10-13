@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const enc = encodeURIComponent;
 
-const state = { filter: "all", q: "", config: null, cache: {} };
+const state = { filter: "all", q: "", config: null, cache: {}, scanned: {} };
 try { state.filter = sessionStorage.getItem("frame.filter") || "all"; } catch {}
 
 async function api(url, opts) {
@@ -88,13 +88,44 @@ document.addEventListener("click", (e) => {
 /* ------------------------------------------------------------------ library */
 
 async function loadLibrary(kind, force = false) {
-  if (!state.cache[kind] || force) state.cache[kind] = await api(`/api/${kind}`);
+  if (!state.cache[kind] || force) {
+    const r = await api(`/api/${kind}`);
+    state.cache[kind] = r.items;
+    state.scanned[kind] = r.scanned;
+  }
   return state.cache[kind];
 }
 
 const isMissing = (it) => !it.hasPoster || (it.seasonsMissing || 0) > 0;
 
 let pollTimer;
+
+// While TMDB matches folders in the background, quietly swap card links to /movies/<tmdb id>
+// without redrawing the grid (keeps scroll position and doesn't reload 1000+ posters).
+function pollMatches(kind, seq) {
+  pollTimer = setTimeout(async () => {
+    if (seq !== renderSeq) return;
+    let items;
+    try { items = await loadLibrary(kind, true); } catch { return; }
+    if (seq !== renderSeq) return;
+    const itemKind = kind === "shows" ? "show" : "movie";
+    const byId = new Map(items.map((it) => [it.id, it]));
+    document.querySelectorAll(".card[data-id]").forEach((a) => {
+      const it = byId.get(a.dataset.id);
+      if (it) a.setAttribute("href", itemPath(itemKind, it));
+    });
+    if (items.some((i) => i.matched === null)) pollMatches(kind, seq);
+  }, 4000);
+}
+
+function ago(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(ts * 1000).toLocaleDateString();
+}
 async function renderLibrary(kind, force = false) {
   const seq = renderSeq;
   clearTimeout(pollTimer);
@@ -122,9 +153,7 @@ async function renderLibrary(kind, force = false) {
   const isShows = kind === "shows";
   const itemKind = isShows ? "show" : "movie";
   // TMDB is still matching folders in the background: refresh in a few seconds
-  if (state.config?.tmdb && items.some((i) => i.matched === null)) {
-    pollTimer = setTimeout(() => { if (seq === renderSeq) { renderSeq++; renderLibrary(kind, true); } }, 3000);
-  }
+  if (state.config?.tmdb && items.some((i) => i.matched === null)) pollMatches(kind, seq);
 
   view.innerHTML = `
     <div class="lib-head">
@@ -133,10 +162,11 @@ async function renderLibrary(kind, force = false) {
         <span><b>${items.length}</b> ${isShows ? "shows" : "movies"}</span>
         <span class="${noPoster ? "warn" : ""}"><b>${noPoster}</b> missing poster</span>
         ${isShows ? `<span class="${seasonGaps ? "warn" : ""}"><b>${seasonGaps}</b> missing season posters</span>` : ""}
+        <span class="scanned" title="Click the rescan button to pick up new folders">Scanned ${ago(state.scanned[kind])}</span>
       </div>
     </div>
     ${shown.length ? `<div class="grid">${shown.map((it) => `
-      <a class="card" href="${itemPath(itemKind, it)}">
+      <a class="card" data-id="${esc(it.id)}" href="${itemPath(itemKind, it)}">
         ${posterHTML({ kind: isShows ? "show" : "movie", id: it.id, has: it.hasPoster, v: it.v, label: it.title })}
         <div class="t" title="${esc(it.id)}">${esc(it.title)}</div>
         <div class="y">${it.year ? `<span>${it.year}</span>` : ""}${isShows ? `<span>${it.seasonCount} season${it.seasonCount === 1 ? "" : "s"}</span>` : ""}
@@ -432,7 +462,11 @@ document.addEventListener("submit", async (e) => {
   catch (err) { toast(err.message, false); }
 });
 
-$("#search").addEventListener("input", (e) => { state.q = e.target.value; route(); });
+let searchTimer;
+$("#search").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.q = e.target.value; route(); }, 120);
+});
 document.querySelectorAll(".seg button").forEach((b) => {
   b.classList.toggle("on", b.dataset.filter === state.filter);
   b.addEventListener("click", () => {
@@ -444,11 +478,19 @@ document.querySelectorAll(".seg button").forEach((b) => {
 });
 $("#rescan").addEventListener("click", async () => {
   const btn = $("#rescan");
-  btn.classList.add("spin");
-  state.cache = {};
-  await route();
-  btn.classList.remove("spin");
-  toast("Library rescanned");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.classList.add("spin");
+  toast("Rescanning library… this can take a bit on a large NAS");
+  try {
+    const r = await api("/api/rescan", { method: "POST" });
+    state.cache = {};
+    await route();
+    toast(`Rescanned ${r.counts.movie ?? 0} movies and ${r.counts.show ?? 0} shows in ${r.seconds}s`);
+  } catch (e) {
+    toast(`Rescan failed: ${e.message}`, false);
+  } finally {
+    btn.disabled = false; btn.classList.remove("spin");
+  }
 });
 
 let toastTimer;

@@ -151,16 +151,16 @@ def match_state(kind: str, name: str) -> Optional[bool]:
 
 def find_by_slug(kind: str, slug: str) -> str:
     """Accepts a TMDB id (/movies/603), a slug (/movies/the-matrix-1999) or a folder name."""
-    dirs = list_dirs(library_root(kind))
+    items = library(kind)["items"]
     if slug.isdigit():
-        for e in dirs:
-            if known_tmdb_id(kind, e.name) == int(slug):
-                return e.name
+        for it in items:
+            if known_tmdb_id(kind, it["id"]) == int(slug):
+                return it["id"]
     want = slugify(slug)  # also accepts a raw folder name from older links
-    for e in dirs:
-        if slugify(e.name) == want:
-            return e.name
-    raise HTTPException(404, f"Nothing called '{slug}' in your {kind}s")
+    for it in items:
+        if it["slug"] == want:
+            return it["id"]
+    raise HTTPException(404, f"Nothing called '{slug}' in your {kind}s. New folder? Click rescan.")
 
 
 def parse_folder_name(name: str) -> tuple[str, Optional[int], Optional[int]]:
@@ -277,34 +277,123 @@ def get_config():
     }
 
 
+# The library index: one entry per movie/show folder, saved to config/library.json.
+# Built on first use and rebuilt only when you click Rescan (POST /api/rescan).
+# Uploading a poster or opening a title refreshes just that one entry.
+LIBRARY_FILE = CONFIG_DIR / "library.json"
+_lib_lock = threading.RLock()
+
+
+def _load_library() -> dict:
+    try:
+        data = json.loads(LIBRARY_FILE.read_text())
+        if data.get("version") == 1:
+            return data
+    except Exception:
+        pass
+    return {"version": 1, "movie": None, "show": None}
+
+
+_lib = _load_library()
+
+
+def _save_library():
+    with _lib_lock:
+        tmp = LIBRARY_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_lib))
+        tmp.replace(LIBRARY_FILE)
+
+
+def index_entry(kind: str, name: str, scan: Optional[dict] = None) -> dict:
+    """What the list pages need to know about one folder."""
+    scan = scan or scan_folder(library_root(kind) / name)
+    title, year, _ = parse_folder_name(name)
+    poster = newest(scan["posters"])
+    entry = {"id": name, "slug": slugify(name), "title": title, "year": year,
+             "hasPoster": poster is not None, "v": version(poster),
+             "posterFile": poster.name if poster else None}
+    if kind == "show":
+        entry["seasonCount"] = len(scan["seasons"])
+        entry["seasonsMissing"] = sum(1 for n in scan["seasons"] if n not in scan["season_posters"])
+    return entry
+
+
+def rescan(kind: str) -> dict:
+    started = time.time()
+    items = []
+    for e in list_dirs(library_root(kind)):
+        try:
+            items.append(index_entry(kind, e.name))
+        except OSError as exc:  # unreadable folder: skip it, keep going
+            log.warning("skipping %s: %s", e.path, exc)
+    with _lib_lock:
+        _lib[kind] = {"scanned": time.time(), "items": items}
+        _save_library()
+    log.info("scanned %d %ss in %.1fs", len(items), kind, time.time() - started)
+    return _lib[kind]
+
+
+def library(kind: str) -> dict:
+    with _lib_lock:
+        if _lib.get(kind) is None:
+            return rescan(kind)
+        return _lib[kind]
+
+
+def update_entry(kind: str, name: str, scan: Optional[dict] = None):
+    """Refresh one folder's entry (after an upload, or when its page is opened)."""
+    with _lib_lock:
+        lib = _lib.get(kind)
+        if lib is None:
+            return
+        items = lib["items"]
+        folder = library_root(kind) / name
+        idx = next((i for i, it in enumerate(items) if it["id"] == name), None)
+        if not folder.is_dir():
+            if idx is not None:
+                items.pop(idx)
+                _save_library()
+            return
+        entry = index_entry(kind, name, scan)
+        if idx is None:
+            items.append(entry)
+            items.sort(key=lambda it: sort_key(it["id"]))
+        elif items[idx] == entry:
+            return
+        else:
+            items[idx] = entry
+        _save_library()
+
+
+def with_tmdb(kind: str, entry: dict) -> dict:
+    return {**entry, "tmdbId": known_tmdb_id(kind, entry["id"]), "matched": match_state(kind, entry["id"])}
+
+
+def list_response(kind: str, background: BackgroundTasks) -> dict:
+    lib = library(kind)
+    background.add_task(match_library, kind)
+    return {"scanned": lib["scanned"], "items": [with_tmdb(kind, it) for it in lib["items"]]}
+
+
 @app.get("/api/movies")
 def get_movies(background: BackgroundTasks):
-    background.add_task(match_library, "movie")
-    out = []
-    for e in list_dirs(MOVIES_DIR):
-        title, year, _ = parse_folder_name(e.name)
-        poster = newest(scan_folder(Path(e.path))["posters"])
-        out.append({"id": e.name, "slug": slugify(e.name), "title": title, "year": year,
-                    "tmdbId": known_tmdb_id("movie", e.name), "matched": match_state("movie", e.name),
-                    "hasPoster": poster is not None, "v": version(poster)})
-    return out
-
-
-def show_summary(name: str, path: Path) -> dict:
-    title, year, _ = parse_folder_name(name)
-    scan = scan_folder(path)
-    poster = newest(scan["posters"])
-    missing = [n for n in scan["seasons"] if n not in scan["season_posters"]]
-    return {"id": name, "slug": slugify(name), "title": title, "year": year,
-            "tmdbId": known_tmdb_id("show", name), "matched": match_state("show", name),
-            "hasPoster": poster is not None, "v": version(poster),
-            "seasonCount": len(scan["seasons"]), "seasonsMissing": len(missing)}
+    return list_response("movie", background)
 
 
 @app.get("/api/shows")
 def get_shows(background: BackgroundTasks):
-    background.add_task(match_library, "show")
-    return [show_summary(e.name, Path(e.path)) for e in list_dirs(SHOWS_DIR)]
+    return list_response("show", background)
+
+
+@app.post("/api/rescan")
+def post_rescan(background: BackgroundTasks, kind: Optional[str] = None):
+    kinds = [kind] if kind else ["movie", "show"]
+    started = time.time()
+    counts = {}
+    for k in kinds:
+        counts[k] = len(rescan(k)["items"])
+        background.add_task(match_library, k)
+    return {"counts": counts, "seconds": round(time.time() - started, 1)}
 
 
 @app.get("/api/movie")
@@ -312,7 +401,9 @@ def get_movie(id: Optional[str] = None, slug: Optional[str] = None):
     id = id or find_by_slug("movie", slug or "")
     folder = item_folder("movie", id)
     title, year, _ = parse_folder_name(id)
-    poster = newest(scan_folder(folder)["posters"])
+    scan = scan_folder(folder)
+    update_entry("movie", id, scan)
+    poster = newest(scan["posters"])
     return {"id": id, "slug": slugify(id), "tmdbId": known_tmdb_id("movie", id),
             "title": title, "year": year, "path": str(folder),
             "hasPoster": poster is not None, "v": version(poster),
@@ -325,6 +416,7 @@ def get_show(id: Optional[str] = None, slug: Optional[str] = None):
     folder = item_folder("show", id)
     title, year, _ = parse_folder_name(id)
     scan = scan_folder(folder)
+    update_entry("show", id, scan)
     poster = newest(scan["posters"])
     seasons = []
     for n in sorted(scan["seasons"], key=lambda n: (n == 0, n)):  # specials last
@@ -365,8 +457,17 @@ def make_thumb(src: Path, width: int) -> Path:
 
 @app.get("/api/poster")
 def get_poster(kind: str, id: str, season: Optional[int] = None, w: Optional[int] = None):
-    _, _, existing = poster_target(kind, id, season)
-    src = newest(existing)
+    src = None
+    if season is None:  # fast path: the index already knows the file name
+        lib = _lib.get(kind) if kind in ("movie", "show") else None
+        entry = next((it for it in (lib or {}).get("items", []) if it["id"] == id), None)
+        if entry and entry.get("posterFile") and "/" not in id and id not in (".", ".."):
+            candidate = library_root(kind) / id / entry["posterFile"]
+            if candidate.is_file():
+                src = candidate
+    if src is None:
+        _, _, existing = poster_target(kind, id, season)
+        src = newest(existing)
     if not src:
         raise HTTPException(404, "No poster")
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
@@ -467,6 +568,7 @@ async def upload_poster(
         final = write_poster(folder, stem, existing, data)
     except PermissionError:
         raise HTTPException(500, f"No permission to write in {folder}. Check the container user / NAS permissions.")
+    update_entry(kind, id)
     return {"ok": True, "file": final.name, "replaced": [p.name for p in existing if p != final],
             "v": version(final)}
 
@@ -566,8 +668,8 @@ async def match_library(kind: str):
         return
     _matching.add(kind)
     try:
-        todo = [e.name for e in list_dirs(library_root(kind))
-                if f"{kind}:{e.name}" not in _meta["items"]]
+        todo = [it["id"] for it in library(kind)["items"]
+                if f"{kind}:{it['id']}" not in _meta["items"]]
         if not todo:
             return
         log.info("matching %d %ss with TMDB", len(todo), kind)
