@@ -26,6 +26,7 @@ const TMDB_LOGO = "https://www.themoviedb.org/assets/v4/logos/v2/blue_short-8e7b
 // GitHub mark (Primer Octicons, mark-github-16)
 const GITHUB_MARK = `<svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>`;
 
+const ICON_NOTE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>`;
 const ICON_MISSING = `<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 16l4.5-4.5 3 3L15 11l5 5"/><path d="M3 3l18 18"/></svg>`;
 
 function posterSrc(kind, id, season, v, w) {
@@ -56,11 +57,15 @@ function route() {
   // Old #/movie/... links → clean URLs
   if (location.hash.startsWith("#/")) history.replaceState(null, "", location.hash.slice(1).replace(/^\/(movie|show)\//, "/$1s/"));
   if (location.pathname === "/" || location.pathname === "") history.replaceState(null, "", "/movies");
-  const [, page = "movies", slug] = location.pathname.split("/").map(decodeURIComponent);
+  if (location.pathname === "/about") history.replaceState(null, "", "/settings");
+  const [, page = "movies", slug, sub] = location.pathname.split("/").map(decodeURIComponent);
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === page));
-  $(".tools").style.visibility = slug || page === "about" ? "hidden" : "visible";
+  const isLib = (page === "movies" || page === "shows") && (!slug || (slug === "genre" && sub));
+  document.body.classList.toggle("lib-page", isLib);  // search + filter only on list pages
+  $("#settings-btn").classList.toggle("on", page === "settings");
   renderSeq++;
-  if (page === "about") return renderAbout();
+  if (page === "settings") return renderSettings();
+  if ((page === "movies" || page === "shows") && slug === "genre" && sub) return renderLibrary(page, false, sub);
   if (page === "movies" && slug) return renderMovie(slug);
   if (page === "shows" && slug) return renderShow(slug);
   if (page === "shows") return renderLibrary("shows");
@@ -68,6 +73,8 @@ function route() {
 }
 let renderSeq = 0; // bumps on every navigation so slow loads don't draw over a newer page
 const itemPath = (kind, it) => `/${kind}s/${it.tmdbId ?? it.slug}`;
+const slugGenre = (g) => g.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const genrePath = (kind, g) => `/${kind}s/genre/${slugGenre(g)}`;
 function canonicalize(kind, it) {
   const want = itemPath(kind, it);
   if (location.pathname !== want) history.replaceState(null, "", want);
@@ -126,7 +133,7 @@ function ago(ts) {
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
   return new Date(ts * 1000).toLocaleDateString();
 }
-async function renderLibrary(kind, force = false) {
+async function renderLibrary(kind, force = false, genre = null) {
   const seq = renderSeq;
   clearTimeout(pollTimer);
   document.title = `${kind === "shows" ? "Shows" : "Movies"} · Frame`;
@@ -144,33 +151,48 @@ async function renderLibrary(kind, force = false) {
     return;
   }
 
-  const q = state.q.trim().toLowerCase();
-  const shown = items.filter((it) =>
-    (state.filter === "all" || isMissing(it)) && (!q || it.id.toLowerCase().includes(q)));
+  // Genre page: only titles TMDB tagged with that genre
+  const counts = new Map();
+  items.forEach((it) => (it.genres || []).forEach((g) => counts.set(g, (counts.get(g) || 0) + 1)));
+  const allGenres = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+  const gslug = genre ? slugGenre(genre) : null;
+  const genreName = gslug ? (allGenres.find((g) => slugGenre(g) === gslug) || genre) : null;
+  const base = gslug ? items.filter((it) => (it.genres || []).some((g) => slugGenre(g) === gslug)) : items;
+  if (genreName) document.title = `${genreName} · ${kind === "shows" ? "Shows" : "Movies"} · Frame`;
 
-  const noPoster = items.filter((i) => !i.hasPoster).length;
-  const seasonGaps = items.reduce((n, i) => n + (i.seasonsMissing || 0), 0);
+  const q = state.q.trim().toLowerCase();
+  const shown = base.filter((it) =>
+    (state.filter === "all" || isMissing(it)) && (!q || it.id.toLowerCase().includes(q) || it.title.toLowerCase().includes(q)));
+
+  const noPoster = base.filter((i) => !i.hasPoster).length;
+  const seasonGaps = base.reduce((n, i) => n + (i.seasonsMissing || 0), 0);
   const isShows = kind === "shows";
   const itemKind = isShows ? "show" : "movie";
   // TMDB is still matching folders in the background: refresh in a few seconds
   if (state.config?.tmdb && items.some((i) => i.matched === null)) pollMatches(kind, seq);
 
   view.innerHTML = `
+    ${genreName ? `<a class="back" href="/${kind}">← All ${kind}</a>` : ""}
     <div class="lib-head">
-      <h1>${isShows ? "Shows" : "Movies"}</h1>
+      <h1>${genreName ? esc(genreName) : isShows ? "Shows" : "Movies"}</h1>
       <div class="stats">
-        <span><b>${items.length}</b> ${isShows ? "shows" : "movies"}</span>
+        <span><b>${base.length}</b> ${isShows ? "shows" : "movies"}</span>
         <span class="${noPoster ? "warn" : ""}"><b>${noPoster}</b> missing poster</span>
         ${isShows ? `<span class="${seasonGaps ? "warn" : ""}"><b>${seasonGaps}</b> missing season posters</span>` : ""}
         <span class="scanned" title="Click the rescan button to pick up new folders">Scanned ${ago(state.scanned[kind])}</span>
       </div>
     </div>
+    ${allGenres.length ? `<nav class="genre-bar" aria-label="Genres">
+      <a class="chip ${gslug ? "" : "on"}" href="/${kind}">All</a>
+      ${allGenres.map((g) => `<a class="chip ${slugGenre(g) === gslug ? "on" : ""}" href="${genrePath(itemKind, g)}">${esc(g)} <span>${counts.get(g)}</span></a>`).join("")}
+    </nav>` : ""}
     ${shown.length ? `<div class="grid">${shown.map((it) => `
       <a class="card" data-id="${esc(it.id)}" href="${itemPath(itemKind, it)}">
         ${posterHTML({ kind: isShows ? "show" : "movie", id: it.id, has: it.hasPoster, v: it.v, label: it.title })}
         <div class="t" title="${esc(it.id)}">${esc(it.title)}</div>
         <div class="y">${it.year ? `<span>${it.year}</span>` : ""}${isShows ? `<span>${it.seasonCount} season${it.seasonCount === 1 ? "" : "s"}</span>` : ""}
           ${it.seasonsMissing ? `<span class="pill" title="Season posters missing">${it.seasonsMissing} missing</span>` : ""}
+          ${it.hasNotes ? `<span class="note-mark" title="Has notes (poster.txt)">${ICON_NOTE}</span>` : ""}
         </div>
       </a>`).join("")}</div>`
     : `<div class="empty"><h2>${state.filter === "missing" ? "Nothing missing 🎉" : "No matches"}</h2></div>`}`;
@@ -197,7 +219,7 @@ function infoBlock(info, kind, id) {
     ${d.tagline ? `<p class="tagline">${esc(d.tagline)}</p>` : ""}
     <div class="meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>
     ${d.overview ? `<p class="overview">${esc(d.overview)}</p>` : ""}
-    ${d.genres && d.genres.length ? `<div class="chips">${d.genres.map((g) => `<span class="chip">${esc(g)}</span>`).join("")}</div>` : ""}
+    ${d.genres && d.genres.length ? `<div class="chips">${d.genres.map((g) => `<a class="chip" href="${genrePath(kind, g)}" title="All ${kind}s tagged ${esc(g)}">${esc(g)}</a>`).join("")}</div>` : ""}
     ${matchForm(kind, id, d)}`;
 }
 
@@ -238,6 +260,7 @@ async function renderMovie(slug) {
             <button class="btn primary" data-edit data-kind="movie" data-id="${esc(id)}">${m.hasPoster ? "Replace poster" : "Upload poster"}</button>
           </div>
           <div class="path">${esc(m.path)}/${m.posterFile ? esc(m.posterFile) : `<span style="color:var(--missing)">folder.jpg — missing</span>`}</div>
+          ${notesBox("movie", m)}
         </div>
       </div>`;
   };
@@ -273,6 +296,7 @@ async function renderShow(slug) {
             <button class="btn primary" data-edit data-kind="show" data-id="${esc(id)}">${s.hasPoster ? "Replace show poster" : "Upload show poster"}</button>
           </div>
           <div class="path">${esc(s.path)}</div>
+          ${notesBox("show", s)}
         </div>
       </div>
       <div class="section-head">
@@ -299,29 +323,143 @@ async function renderShow(slug) {
   draw(info);
 }
 
-function renderAbout() {
-  const c = state.config || {};
-  document.title = "About · Frame";
-  view.innerHTML = `
-    <div class="about">
-      <div class="about-brand">
-        <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="2" width="22" height="28" rx="3"/><rect x="9" y="6" width="14" height="20" rx="1" class="cut"/></svg>
-        <div><h1>Frame</h1><p>Version ${esc(c.version || "")} · a poster manager for your movie &amp; TV folders</p></div>
-      </div>
+/* ------------------------------------------------------------------ notes (poster.txt) */
 
-      <a class="credit" href="${esc(c.github || "https://github.com/")}" target="_blank" rel="noopener">
-        ${GITHUB_MARK}
-        <div><b>Source code on GitHub</b><span>${esc((c.github || "").replace(/^https?:\/\//, ""))}</span></div>
-      </a>
+const URL_RE = /https?:\/\/[^\s<>"']+/g;
+const findLinks = (text) => [...new Set((text || "").match(URL_RE) || [])].map((u) => u.replace(/[).,;]+$/, ""));
+const isPosterLink = (u) => TPDB_RE.test(u) || /\.(jpe?g|png|webp)(\?|$)/i.test(u);
 
-      <h2>Credits</h2>
-      <div class="credit">
-        <p>Posters can be downloaded from <a href="https://theposterdb.com" target="_blank" rel="noopener">ThePosterDB</a>.
-        Artwork belongs to its creators — please support the artists whose work you use.
-        ${c.tpdbUser ? `Downloads are credited to <b>${esc(c.tpdbUser)}</b>.` : ""}</p>
-      </div>
-    </div>`;
+function noteLinksHTML(text) {
+  const links = findLinks(text);
+  return links.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\//, "").slice(0, 70))}</a>`).join("");
 }
+
+function notesBox(kind, item) {
+  return `<section class="notes">
+    <div class="notes-head"><h3>Notes</h3><span class="notes-status" id="notes-status"></span></div>
+    <textarea data-notes data-kind="${kind}" data-id="${esc(item.id)}" rows="3"
+      placeholder="${kind === "show" ? "e.g. ThePosterDB link for the next season's poster" : "e.g. a better poster to grab later"}">${esc(item.notes || "")}</textarea>
+    <div class="note-links" id="note-links">${noteLinksHTML(item.notes)}</div>
+    <p class="hint">Saved automatically as <code>poster.txt</code> in this folder. Poster links here show up as quick picks when you change a poster.</p>
+  </section>`;
+}
+
+let notesTimer;
+async function saveNotes(el) {
+  clearTimeout(notesTimer);
+  const status = $("#notes-status");
+  const text = el.value;
+  if (current.item && current.item.notes === text) return;
+  const fd = new FormData();
+  fd.append("kind", el.dataset.kind); fd.append("id", el.dataset.id); fd.append("text", text);
+  if (status) status.textContent = "Saving…";
+  try {
+    const r = await api("/api/notes", { method: "POST", body: fd });
+    if (current.item) current.item.notes = text;
+    delete state.cache[el.dataset.kind + "s"];
+    if (status) status.textContent = r.saved ? "Saved" : "Cleared";
+  } catch (err) {
+    if (status) status.textContent = `Not saved: ${err.message}`;
+  }
+}
+document.addEventListener("input", (e) => {
+  if (!e.target.matches?.("textarea[data-notes]")) return;
+  const el = e.target;
+  $("#note-links").innerHTML = noteLinksHTML(el.value);
+  $("#notes-status").textContent = "";
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(() => saveNotes(el), 900);
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target.matches?.("textarea[data-notes]")) saveNotes(e.target);
+});
+
+/* ------------------------------------------------------------------ settings */
+
+async function renderSettings() {
+  const seq = renderSeq;
+  document.title = "Settings · Frame";
+  view.innerHTML = `<p class="skeleton">Loading…</p>`;
+  let st;
+  try { st = await api("/api/settings"); }
+  catch (e) { view.innerHTML = `<div class="empty"><h2>${esc(e.message)}</h2></div>`; return; }
+  if (seq !== renderSeq) return;
+  const L = st.library;
+  const src = (s) => ({ app: "saved in Frame's settings", env: "from .env / Docker environment", none: "not set" }[s]);
+  view.innerHTML = `
+    <div class="settings">
+      <h1>Settings</h1>
+
+      <section class="panel">
+        <h2>Library</h2>
+        <dl class="kv">
+          <dt>Movies</dt><dd><b>${L.movies}</b> · <code>${esc(L.moviesDir)}</code> · scanned ${ago(L.moviesScanned) || "never"}</dd>
+          <dt>Shows</dt><dd><b>${L.shows}</b> · <code>${esc(L.showsDir)}</code> · scanned ${ago(L.showsScanned) || "never"}</dd>
+          <dt>Matched with TMDB</dt><dd><b>${L.matched}</b> titles</dd>
+          <dt>Cache</dt><dd><code>${esc(L.configDir)}</code></dd>
+        </dl>
+        <button class="btn" type="button" id="settings-rescan">Rescan library</button>
+      </section>
+
+      <section class="panel">
+        <h2>TMDB</h2>
+        <form class="setting-row" data-settings>
+          <label for="tmdb_key">API key or read-access token</label>
+          <div class="field">
+            <input type="password" id="tmdb_key" name="tmdb_key" autocomplete="off"
+              placeholder="${st.tmdb.hint ? `Key set (${esc(st.tmdb.hint)}) — paste a new one to change it` : "Paste your TMDB key"}">
+            <button class="btn primary">Save</button>
+            ${st.tmdb.source === "app" ? `<button class="btn ghost" type="button" data-clear="tmdb_key">Use .env value</button>` : ""}
+          </div>
+          <p class="hint">Currently ${src(st.tmdb.source)}. Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org → Settings → API</a>.</p>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>ThePosterDB</h2>
+        <form class="setting-row" data-settings>
+          <label for="tpdb_user">Username</label>
+          <div class="field">
+            <input id="tpdb_user" name="tpdb_user" autocomplete="off" value="${esc(st.tpdb.user)}" placeholder="Your ThePosterDB username">
+            <button class="btn primary">Save</button>
+          </div>
+          <p class="hint">Poster downloads are credited to this account. Currently ${src(st.tpdb.source)}.</p>
+        </form>
+      </section>
+
+      <section class="panel panel-about">
+        <h2>About</h2>
+        <div class="about-brand">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="2" width="22" height="28" rx="3"/><rect x="9" y="6" width="14" height="20" rx="1" class="cut"/></svg>
+          <div><h3>Frame</h3><p>Version ${esc(st.version)} · a poster manager for your movie &amp; TV folders</p></div>
+        </div>
+        <a class="credit" href="${esc(st.github)}" target="_blank" rel="noopener">
+          ${GITHUB_MARK}
+          <div><b>Source code on GitHub</b><span>${esc(st.github.replace(/^https?:\/\//, ""))}</span></div>
+        </a>
+        <div class="credit">
+          <p>Posters can be downloaded from <a href="https://theposterdb.com" target="_blank" rel="noopener">ThePosterDB</a>.
+          Artwork belongs to its creators — please support the artists whose work you use.</p>
+        </div>
+      </section>
+    </div>`;
+  $("#settings-rescan").onclick = () => $("#rescan").click();
+}
+
+async function saveSettings(fields) {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+  try {
+    await api("/api/settings", { method: "POST", body: fd });
+    try { state.config = await api("/api/config"); } catch {}
+    toast("Settings saved");
+    renderSettings();
+  } catch (err) { toast(err.message, false); }
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-clear]");
+  if (b) saveSettings({ [b.dataset.clear]: "" });
+});
 
 /* ------------------------------------------------------------------ poster dialog */
 
@@ -357,6 +495,13 @@ function openDialog(kind, id, season) {
 
   const d = current.info?.data;
   const tmdbPoster = isSeason ? d?.seasons?.[season]?.posterOriginal : d?.posterOriginal;
+  const picks = findLinks(current.item?.notes).filter(isPosterLink);
+  const fromNotes = $("#dlg-from-notes");
+  fromNotes.hidden = !picks.length;
+  fromNotes.innerHTML = picks.length ? `<span>From your notes:</span>` + picks.map((u) => {
+    const t = u.match(TPDB_RE);
+    return `<button type="button" class="btn ghost" data-pick="${esc(u)}">${t ? `ThePosterDB #${t[1]}` : esc(u.split("/").pop().slice(0, 30))}</button>`;
+  }).join("") : "";
   const tmdbBtn = $("#dlg-tmdb");
   tmdbBtn.hidden = !tmdbPoster;
   tmdbBtn.onclick = () => useUrl(tmdbPoster, (isSeason ? d.seasons[season].poster : d.poster));
@@ -447,10 +592,25 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   openDialog(el.dataset.kind, el.dataset.id, el.dataset.season != null ? Number(el.dataset.season) : null);
 });
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pick]");
+  if (b) useUrl(b.dataset.pick);
+});
 document.addEventListener("keydown", (e) => {
   if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".editable")) { e.preventDefault(); e.target.click(); }
 });
 
+document.addEventListener("submit", (e) => {
+  const form = e.target.closest("[data-settings]");
+  if (!form) return;
+  e.preventDefault();
+  const fields = {};
+  for (const [k, v] of new FormData(form)) {
+    if (k === "tmdb_key" && !v.trim()) continue;  // blank key field = leave it alone
+    fields[k] = v;
+  }
+  if (Object.keys(fields).length) saveSettings(fields);
+});
 document.addEventListener("submit", async (e) => {
   const form = e.target.closest("[data-match]");
   if (!form) return;
@@ -510,7 +670,7 @@ function renderFooter() {
       Movie and TV information and images are provided by <a href="https://www.themoviedb.org" target="_blank" rel="noopener">The Movie Database (TMDB)</a>.</p>
     </div>
     <nav class="foot-links">
-      <a href="/about">About</a>
+      <a href="/settings">Settings &amp; about</a>
       <a href="${esc(c.github || "https://github.com/")}" target="_blank" rel="noopener" class="gh-link" aria-label="GitHub">${GITHUB_MARK}</a>
     </nav>`;
 }

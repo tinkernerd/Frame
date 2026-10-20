@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -47,14 +47,24 @@ ENV_FILE = Path(".env")
 _env_mtime = 0.0
 
 
+# Settings changed on the Settings page live in config/settings.json and win over env/.env
+EDITABLE_SETTINGS = {"TMDB_API_KEY", "TPDB_USERNAME"}
+_settings: dict = {}
+
+
 def env(name: str, default: str = "") -> str:
     """Read a setting, re-reading .env if it changed, so edits apply without a restart."""
+    if name in EDITABLE_SETTINGS and _settings.get(name):
+        return _settings[name].strip()
     global _env_mtime
     try:
         m = ENV_FILE.stat().st_mtime
         if m != _env_mtime:
             _env_mtime = m
-            load_dotenv(ENV_FILE, override=True)
+            # .env wins, but a blank line in it (e.g. "TMDB_API_KEY=") doesn't wipe a real value
+            for k, v in dotenv_values(ENV_FILE).items():
+                if v:
+                    os.environ[k] = v
     except OSError:
         pass
     return os.getenv(name, default).strip()
@@ -70,6 +80,8 @@ GITHUB_URL = "https://github.com/tinkernerd/Frame"
 
 
 POSTER_STEM = "folder"
+NOTES_FILE = "poster.txt"   # per-title notes, e.g. where to grab next season's poster
+MAX_NOTES_BYTES = 20_000
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 FORMAT_EXT = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
 THUMB_WIDTHS = (200, 342, 500)
@@ -95,6 +107,11 @@ def _writable_dir(preferred: Path) -> Path:
 
 
 CONFIG_DIR = _writable_dir(CONFIG_DIR)
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
+try:
+    _settings.update(json.loads(SETTINGS_FILE.read_text()))
+except Exception:
+    pass
 THUMB_DIR = CONFIG_DIR / "thumbs"
 THUMB_DIR.mkdir(exist_ok=True)
 META_FILE = CONFIG_DIR / "metadata.json"
@@ -217,9 +234,13 @@ def scan_folder(folder: Path) -> dict:
     seasons: dict[int, str] = {}
     posters: list[Path] = []
     season_posters: dict[int, list[Path]] = {}
+    notes = None
     with os.scandir(folder) as it:
         for e in it:
             if e.name.startswith(SKIP_PREFIXES):
+                continue
+            if e.name.lower() == NOTES_FILE:
+                notes = Path(e.path)
                 continue
             if e.is_dir():
                 n = season_number(e.name)
@@ -237,7 +258,7 @@ def scan_folder(folder: Path) -> dict:
                 key = m.group(1).lower()
                 n = 0 if key == "specials" else int(key)
                 season_posters.setdefault(n, []).append(Path(e.path))
-    return {"seasons": seasons, "posters": posters, "season_posters": season_posters}
+    return {"seasons": seasons, "posters": posters, "season_posters": season_posters, "notes": notes}
 
 
 def library_root(kind: str) -> Path:
@@ -321,7 +342,8 @@ def index_entry(kind: str, name: str, scan: Optional[dict] = None) -> dict:
     poster = newest(scan["posters"])
     entry = {"id": name, "slug": slugify(name), "title": title, "year": year,
              "hasPoster": poster is not None, "v": version(poster),
-             "posterFile": poster.name if poster else None}
+             "posterFile": poster.name if poster else None,
+             "hasNotes": scan.get("notes") is not None}
     if kind == "show":
         entry["seasonCount"] = len(scan["seasons"])
         entry["seasonsMissing"] = sum(1 for n in scan["seasons"] if n not in scan["season_posters"])
@@ -375,14 +397,66 @@ def update_entry(kind: str, name: str, scan: Optional[dict] = None):
         _save_library()
 
 
+def cached_genres(kind: str, name: str) -> list:
+    entry = _meta["items"].get(f"{kind}:{name}") or {}
+    return (entry.get("data") or {}).get("genres") or []
+
+
 def with_tmdb(kind: str, entry: dict) -> dict:
-    return {**entry, "title": parse_folder_name(entry["id"])[0], "tmdbId": known_tmdb_id(kind, entry["id"]), "matched": match_state(kind, entry["id"])}
+    return {**entry, "title": parse_folder_name(entry["id"])[0], "genres": cached_genres(kind, entry["id"]), "tmdbId": known_tmdb_id(kind, entry["id"]), "matched": match_state(kind, entry["id"])}
 
 
 def list_response(kind: str, background: BackgroundTasks) -> dict:
     lib = library(kind)
     background.add_task(match_library, kind)
     return {"scanned": lib["scanned"], "items": [with_tmdb(kind, it) for it in lib["items"]]}
+
+
+def _mask(v: str) -> str:
+    return f"…{v[-4:]}" if len(v) > 8 else "set"
+
+
+@app.get("/api/settings")
+def get_settings():
+    def source(name):
+        if _settings.get(name):
+            return "app"
+        env(name)  # refresh .env
+        return "env" if os.getenv(name, "").strip() else "none"
+    lib = {k: (_lib.get(k) or {}) for k in ("movie", "show")}
+    return {
+        "tmdb": {"source": source("TMDB_API_KEY"), "hint": _mask(tmdb_key()) if tmdb_key() else ""},
+        "tpdb": {"source": source("TPDB_USERNAME"), "user": env("TPDB_USERNAME")},
+        "library": {
+            "moviesDir": str(MOVIES_DIR), "showsDir": str(SHOWS_DIR), "configDir": str(CONFIG_DIR),
+            "movies": len(lib["movie"].get("items", [])), "shows": len(lib["show"].get("items", [])),
+            "moviesScanned": lib["movie"].get("scanned"), "showsScanned": lib["show"].get("scanned"),
+            "matched": sum(1 for k in _meta["items"].values() if k.get("data")),
+        },
+        "version": APP_VERSION, "github": GITHUB_URL,
+    }
+
+
+@app.post("/api/settings")
+def save_settings(tmdb_key_value: Optional[str] = Form(None, alias="tmdb_key"),
+                  tpdb_user: Optional[str] = Form(None)):
+    """A field left out is unchanged; an empty value clears the app setting (falls back to .env)."""
+    for name, value in (("TMDB_API_KEY", tmdb_key_value), ("TPDB_USERNAME", tpdb_user)):
+        if value is None:
+            continue
+        value = value.strip()
+        if value:
+            _settings[name] = value
+        else:
+            _settings.pop(name, None)
+    tmp = SETTINGS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(_settings, indent=1))
+    try:
+        os.chmod(tmp, 0o600)  # holds your API key
+    except OSError:
+        pass
+    tmp.replace(SETTINGS_FILE)
+    return get_settings()
 
 
 @app.get("/api/movies")
@@ -417,7 +491,8 @@ def get_movie(id: Optional[str] = None, slug: Optional[str] = None):
     return {"id": id, "slug": slugify(id), "tmdbId": known_tmdb_id("movie", id),
             "title": title, "year": year, "path": str(folder),
             "hasPoster": poster is not None, "v": version(poster),
-            "posterFile": poster.name if poster else None}
+            "posterFile": poster.name if poster else None,
+            "notes": read_notes(scan)}
 
 
 @app.get("/api/show")
@@ -439,7 +514,42 @@ def get_show(id: Optional[str] = None, slug: Optional[str] = None):
             "title": title, "year": year, "path": str(folder),
             "hasPoster": poster is not None, "v": version(poster),
             "posterFile": poster.name if poster else None,
-            "seasons": seasons, "orphanSeasonPosters": orphans}
+            "seasons": seasons, "orphanSeasonPosters": orphans,
+            "notes": read_notes(scan)}
+
+
+def read_notes(scan: dict) -> str:
+    p = scan.get("notes")
+    if not p:
+        return ""
+    try:
+        return p.read_bytes()[:MAX_NOTES_BYTES].decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+@app.post("/api/notes")
+def save_notes(kind: str = Form(...), id: str = Form(...), text: str = Form("")):
+    """Saves notes as poster.txt in the title's folder; empty notes remove the file."""
+    folder = item_folder(kind, id)
+    data = text.replace("\r\n", "\n").strip()
+    if len(data.encode()) > MAX_NOTES_BYTES:
+        raise HTTPException(413, "Notes are too long")
+    target = folder / NOTES_FILE
+    existing = scan_folder(folder).get("notes")  # keep the user's existing file name/case
+    if existing:
+        target = existing
+    try:
+        if data:
+            tmp = folder / f".{NOTES_FILE}.saving"
+            tmp.write_text(data + "\n", encoding="utf-8")
+            tmp.replace(target)
+        elif target.exists():
+            target.unlink()
+    except PermissionError:
+        raise HTTPException(500, f"No permission to write in {folder}.")
+    update_entry(kind, id)
+    return {"ok": True, "saved": bool(data), "file": target.name}
 
 
 # --------------------------------------------------------------------------- posters
@@ -745,9 +855,12 @@ STATIC = Path(__file__).parent / "static"
 @app.get("/movies", include_in_schema=False)
 @app.get("/shows", include_in_schema=False)
 @app.get("/about", include_in_schema=False)
+@app.get("/settings", include_in_schema=False)
 @app.get("/movies/{slug}", include_in_schema=False)
 @app.get("/shows/{slug}", include_in_schema=False)
-def spa(slug: str = ""):
+@app.get("/movies/genre/{genre}", include_in_schema=False)
+@app.get("/shows/genre/{genre}", include_in_schema=False)
+def spa(slug: str = "", genre: str = ""):
     # Stamp asset URLs with their modified time so browsers always fetch the latest CSS/JS
     html = (STATIC / "index.html").read_text()
     for asset in ("style.css", "app.js"):

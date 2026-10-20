@@ -49,6 +49,14 @@ Changes to `.env` apply without restarting the server.
   That publishes `frame:0.02` and `frame:latest`.
 - Servers run `latest` by default and pull from `main`, so they only change when you release.
 
+## Notes, genres and settings
+
+- **Notes:** each movie/show page has a notes box, saved as `poster.txt` in that folder (handy for
+  "season 3 poster is here when it's out"). Poster links in notes show up as quick picks in the poster dialog.
+- **Genres:** click a genre chip to see every title with that genre.
+- **Settings** (gear icon): library status, rescan, and the TMDB key / ThePosterDB username. Values saved here
+  go in `config/settings.json` and override `.env`, so you can change them without editing files or restarting.
+
 ## Addresses
 
 Pages use the TMDB number once a folder is matched — `/movies/603`, `/shows/1396` —

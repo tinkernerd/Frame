@@ -6,11 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Genre pages:** click a genre on any movie or show to see every title with it (`/movies/genre/drama`, `/shows/genre/comedy`). List pages also have a genre bar with counts.
+- **Notes** on every movie and show, saved as `poster.txt` in its folder. Links become clickable, poster links appear as one-click picks in the poster dialog, and titles with notes get a marker on their card.
+- **Settings page** (gear button next to rescan): library status and rescan, TMDB key and ThePosterDB username editable in the app (saved to `config/settings.json`, overriding `.env`), plus the About info. `/about` now redirects here.
 - GitHub Actions publishes Docker images to `ghcr.io/tinkernerd/frame` for amd64 and arm64. Releases are tagged with their version number (`0.02`) and `latest`; pushes to the `dev` branch are tagged `edge`.
 - `install.sh` downloads the published image instead of building on the server. It falls back to building, and `--build` forces it.
 - `FRAME_TAG` setting to pin an image version.
 
+### Fixed
+- A blank line in `.env` (e.g. `TMDB_API_KEY=`) no longer wipes out the same setting from the Docker environment.
+
 ### Changed
+- Search also matches the display title, so "The Bear" finds `Bear, The`.
 - Folders named with the article last show it first: `Bear, The` displays as **The Bear** (and still sorts under B). Works for The, A and An.
 - Work happens on a `dev` branch; `main` only gets released code.
 - The library scan is saved to `config/library.json` and reused, including across restarts. Folders are only re-read when you click **Rescan**, which matters on large NAS libraries (1,000+ titles).
