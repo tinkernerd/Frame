@@ -168,9 +168,19 @@ def parse_folder_name(name: str) -> tuple[str, Optional[int], Optional[int]]:
     tmdb = re.search(r"[\[{]tmdb(?:id)?[-=](\d+)[\]}]", name, re.I)
     clean = re.sub(r"[\[{][^\]}]*[\]}]", "", name).strip()
     m = re.match(r"^(.*?)[\s._-]*\((\d{4})\)\s*$", clean)
-    if m:
-        return m.group(1).strip(), int(m.group(2)), int(tmdb.group(1)) if tmdb else None
-    return clean, None, int(tmdb.group(1)) if tmdb else None
+    title, year = (m.group(1).strip(), int(m.group(2))) if m else (clean, None)
+    return article_first(title), year, int(tmdb.group(1)) if tmdb else None
+
+
+ARTICLE_LAST_RE = re.compile(r"^(.*\S),\s*(the|a|an)(\s*\(.*\))?$", re.I)
+
+
+def article_first(title: str) -> str:
+    """'Bear, The' -> 'The Bear';  'Office, The (US)' -> 'The Office (US)'."""
+    m = ARTICLE_LAST_RE.match(title)
+    if not m:
+        return title
+    return f"{m.group(2).capitalize()} {m.group(1)}{m.group(3) or ''}"
 
 
 def season_number(dirname: str) -> Optional[int]:
@@ -366,7 +376,7 @@ def update_entry(kind: str, name: str, scan: Optional[dict] = None):
 
 
 def with_tmdb(kind: str, entry: dict) -> dict:
-    return {**entry, "tmdbId": known_tmdb_id(kind, entry["id"]), "matched": match_state(kind, entry["id"])}
+    return {**entry, "title": parse_folder_name(entry["id"])[0], "tmdbId": known_tmdb_id(kind, entry["id"]), "matched": match_state(kind, entry["id"])}
 
 
 def list_response(kind: str, background: BackgroundTasks) -> dict:

@@ -6,11 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- GitHub Actions publishes Docker images to `ghcr.io/tinkernerd/frame` for amd64 and arm64. Releases are tagged `vX.XX` and `latest`, and pushes to `main` are tagged `edge`.
+- GitHub Actions publishes Docker images to `ghcr.io/tinkernerd/frame` for amd64 and arm64. Releases are tagged with their version number (`0.02`) and `latest`; pushes to the `dev` branch are tagged `edge`.
 - `install.sh` downloads the published image instead of building on the server. It falls back to building, and `--build` forces it.
 - `FRAME_TAG` setting to pin an image version.
 
 ### Changed
+- Folders named with the article last show it first: `Bear, The` displays as **The Bear** (and still sorts under B). Works for The, A and An.
+- Work happens on a `dev` branch; `main` only gets released code.
 - The library scan is saved to `config/library.json` and reused, including across restarts. Folders are only re-read when you click **Rescan**, which matters on large NAS libraries (1,000+ titles).
 - Uploading a poster or opening a title refreshes just that one entry.
 - Lists show when the library was last scanned.

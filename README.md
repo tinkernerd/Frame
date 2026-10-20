@@ -41,6 +41,14 @@ The dev server auto-reloads when you edit files. Without the debugger:
 
 Changes to `.env` apply without restarting the server.
 
+## Branches and releases
+
+- **`dev`** is where day-to-day work goes. Every push to `dev` publishes the `edge` image.
+- **`main`** only gets finished work: open a pull request from `dev` into `main` (Actions checks that
+  it builds), merge it, then publish a GitHub release from `main` with a version tag like `0.02`.
+  That publishes `frame:0.02` and `frame:latest`.
+- Servers run `latest` by default and pull from `main`, so they only change when you release.
+
 ## Addresses
 
 Pages use the TMDB number once a folder is matched — `/movies/603`, `/shows/1396` —
@@ -89,8 +97,8 @@ Images are built by GitHub Actions for amd64 and arm64:
 | Tag | What it is |
 |---|---|
 | `latest` | Newest release |
-| `v0.01`, … | A specific release |
-| `edge` | Newest commit on `main` (may be unstable) |
+| `0.02`, `0.03`, … | A specific release |
+| `edge` | Newest commit on the `dev` branch (may be unstable) |
 
 Pick one with `FRAME_TAG=` in `.env`.
 

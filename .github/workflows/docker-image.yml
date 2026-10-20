@@ -1,13 +1,13 @@
 name: Docker image
 
-# Publish a release (e.g. v0.01)  → ghcr.io/tinkernerd/frame:v0.01 and :latest
-# Push to main                    → ghcr.io/tinkernerd/frame:edge
-# Pull request                    → build only, nothing is published
+# Push to dev                     → ghcr.io/tinkernerd/frame:edge   (latest dev change)
+# Publish a release (tag 0.02)    → ghcr.io/tinkernerd/frame:0.02 and :latest
+# Pull request into main          → build only, nothing is published
 on:
+  push:
+    branches: [dev]
   release:
     types: [published]
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -44,10 +44,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=ref,event=tag
+            type=match,pattern=^v?(\d+(\.\d+)*)$,group=1
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,format=short
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/dev' }}
           labels: |
             org.opencontainers.image.title=Frame
             org.opencontainers.image.description=Self-hosted poster manager for folder-based movie & TV libraries
